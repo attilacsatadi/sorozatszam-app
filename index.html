@@ -35,6 +35,7 @@
     <button id="checkButton">Ellenőriz</button>
 
     <script>
+        // Firebase konfiguráció
         const firebaseConfig = {
             apiKey: "AIzaSyApTBFc8j6t47wE8f-MiFMVgyYxdtrlDao",
             authDomain: "nyilvantartas-4e908.firebaseapp.com",
@@ -46,18 +47,19 @@
         };
 
         // Inicializálás
-        const app = firebase.initializeApp(firebaseConfig);
+        firebase.initializeApp(firebaseConfig);
         const db = firebase.firestore();
+
+        // Helyi adatok (offline)
+        const stolenDevices = {
+            "123456": { type: "Laptop" },
+            "654321": { type: "Telefont" }
+        };
 
         document.getElementById('checkButton').addEventListener('click', function() {
             const serialNumber = document.getElementById('serialNumber').value.trim();
 
             // Offline ellenőrzés
-            const stolenDevices = {
-                "123456": { type: "Laptop" },
-                "654321": { type: "Telefont" }
-            };
-
             if (stolenDevices[serialNumber]) {
                 alert("A megadott sorozatszám szerepel az ellopott listán.");
                 updateFirestore(serialNumber, true);
