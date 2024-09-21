@@ -72,7 +72,12 @@
 
         function updateFirestore(serialNumber, isStolen) {
             const docRef = doc(db, 'stolen_devices', serialNumber);
-            setDoc(docRef, { found: isStolen })
+            setDoc(docRef, {
+                found: isStolen,
+                serial_number: serialNumber,
+                device_type: stolenDevices[serialNumber] ? stolenDevices[serialNumber].type : 'N/A',
+                added_date: new Date()  // Hozzáadás dátuma
+            }, { merge: true })  // Merge=True, hogy ne törölje a meglévő mezőket
             .then(() => {
                 console.log("Adatok frissítve a Firestore-ban.");
             })
