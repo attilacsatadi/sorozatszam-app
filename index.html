@@ -27,9 +27,7 @@
         };
 
         function checkSerialNumber() {
-            const serialNumber = document.getElementById('serialNumber').value;
-            
-            // Offline ellenőrzés
+            const serialNumber = document.getElementById('serialNumber').value.trim();
             if (stolenDevices[serialNumber]) {
                 alert("A megadott sorozatszám szerepel az ellopott listán.");
             } else {
