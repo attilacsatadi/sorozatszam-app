@@ -5,7 +5,6 @@
     <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-firestore.js"></script>
     <script>
-        // Firebase konfiguráció
         const firebaseConfig = {
             apiKey: "AIzaSyApTBFc8j6t47wE8f-MiFMVgyYxdtrlDao",
             authDomain: "nyilvantartas-4e908.firebaseapp.com",
@@ -16,11 +15,9 @@
             measurementId: "G-CL92MYGGNW"
         };
 
-        // Inicializálás
-        const app = firebase.initializeApp(firebaseConfig);
+        firebase.initializeApp(firebaseConfig);
         const db = firebase.firestore();
 
-        // Helyi adatok (offline)
         const stolenDevices = {
             "123456": { type: "Laptop", found: false },
             "654321": { type: "Telefont", found: true }
@@ -34,7 +31,6 @@
                 alert("A megadott sorozatszám nem szerepel az ellopott listán.");
             }
 
-            // Online ellenőrzés
             db.collection('stolen_devices').doc(serialNumber).get()
                 .then((doc) => {
                     if (doc.exists) {
