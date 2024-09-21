@@ -36,7 +36,7 @@
                 alert("A megadott sorozatszám nem szerepel az ellopott listán.");
             }
 
-            // Online ellenőrzés, ha szükséges
+            // Online ellenőrzés
             db.collection('stolen_devices').doc(serialNumber).get()
                 .then((doc) => {
                     if (doc.exists) {
