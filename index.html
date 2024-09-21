@@ -2,8 +2,6 @@
 <html>
 <head>
     <title>Sorozatszám Ellenőrző</title>
-    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-firestore.js"></script>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -34,8 +32,11 @@
     <input type="text" id="serialNumber" placeholder="Írd be a sorozatszámot">
     <button id="checkButton">Ellenőriz</button>
 
-    <script>
+    <script type="module">
         // Firebase konfiguráció
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-app.js";
+        import { getFirestore, doc, setDoc } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-firestore.js";
+
         const firebaseConfig = {
             apiKey: "AIzaSyApTBFc8j6t47wE8f-MiFMVgyYxdtrlDao",
             authDomain: "nyilvantartas-4e908.firebaseapp.com",
@@ -47,8 +48,8 @@
         };
 
         // Inicializálás
-        firebase.initializeApp(firebaseConfig);
-        const db = firebase.firestore();
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
 
         // Helyi adatok (offline)
         const stolenDevices = {
@@ -70,9 +71,8 @@
         });
 
         function updateFirestore(serialNumber, isStolen) {
-            db.collection('stolen_devices').doc(serialNumber).set({
-                found: isStolen
-            })
+            const docRef = doc(db, 'stolen_devices', serialNumber);
+            setDoc(docRef, { found: isStolen })
             .then(() => {
                 console.log("Adatok frissítve a Firestore-ban.");
             })
