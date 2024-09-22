@@ -2,89 +2,50 @@
 <html>
 <head>
     <title>Sorozatszám Ellenőrző</title>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            background-color: #f4f4f4;
-            padding: 20px;
+    <script>
+        // Flask szerver URL-je
+        const SERVER_URL = 'http://localhost:5000'; // Ha a szerver más gépen fut, cseréld le a megfelelő IP-címre
+
+        // Helyi adatok (offline)
+        const stolenDevices = {
+            "123456": { type: "Laptop", found: false },
+            "654321": { type: "Telefont", found: true }
+        };
+
+        async function checkSerialNumber() {
+            const serialNumber = document.getElementById('serialNumber').value.trim();
+            
+            if (!serialNumber) {
+                alert("Kérlek, add meg a sorozatszámot!");
+                return;
+            }
+
+            // Offline ellenőrzés
+            if (stolenDevices[serialNumber]) {
+                alert("A megadott sorozatszám szerepel az ellopott listán (offline).");
+            } else {
+                alert("A megadott sorozatszám nem szerepel az ellopott listán (offline).");
+            }
+
+            // Online ellenőrzés
+            try {
+                const response = await fetch(`${SERVER_URL}/search/${serialNumber}`);
+                if (response.status === 200) {
+                    alert("A megadott sorozatszám szerepel az ellopott listán (online).");
+                } else if (response.status === 404) {
+                    alert("A megadott sorozatszám nem szerepel az ellopott listán (online).");
+                } else {
+                    alert("Hiba történt: " + response.statusText);
+                }
+            } catch (error) {
+                alert("Hiba történt: " + error.message);
+            }
         }
-        h1 {
-            color: #333;
-        }
-        input, button {
-            padding: 10px;
-            margin-top: 10px;
-            border: 1px solid #ccc;
-            border-radius: 4px;
-        }
-        button {
-            background-color: #28a745;
-            color: white;
-            cursor: pointer;
-        }
-        button:hover {
-            background-color: #218838;
-        }
-    </style>
+    </script>
 </head>
 <body>
     <h1>Sorozatszám Ellenőrző</h1>
     <input type="text" id="serialNumber" placeholder="Írd be a sorozatszámot">
-    <button id="checkButton">Ellenőriz</button>
-
-    <script type="module">
-        // Firebase konfiguráció
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-app.js";
-        import { getFirestore, doc, setDoc } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-firestore.js";
-
-        const firebaseConfig = {
-            apiKey: "AIzaSyApTBFc8j6t47wE8f-MiFMVgyYxdtrlDao",
-            authDomain: "nyilvantartas-4e908.firebaseapp.com",
-            projectId: "nyilvantartas-4e908",
-            storageBucket: "nyilvantartas-4e908.appspot.com",
-            messagingSenderId: "273868654725",
-            appId: "1:273868654725:web:be49accbdbcafe244701ec",
-            measurementId: "G-CL92MYGGNW"
-        };
-
-        // Inicializálás
-        const app = initializeApp(firebaseConfig);
-        const db = getFirestore(app);
-
-        // Helyi adatok (offline)
-        const stolenDevices = {
-            "123456": { type: "Laptop" },
-            "654321": { type: "Telefont" }
-        };
-
-        document.getElementById('checkButton').addEventListener('click', function() {
-            const serialNumber = document.getElementById('serialNumber').value.trim();
-
-            // Offline ellenőrzés
-            if (stolenDevices[serialNumber]) {
-                alert("A megadott sorozatszám szerepel az ellopott listán.");
-                updateFirestore(serialNumber, true);
-            } else {
-                alert("A megadott sorozatszám nem szerepel az ellopott listán.");
-                updateFirestore(serialNumber, false);
-            }
-        });
-
-        function updateFirestore(serialNumber, isStolen) {
-            const docRef = doc(db, 'stolen_devices', serialNumber);
-            setDoc(docRef, {
-                found: isStolen,
-                serial_number: serialNumber,
-                device_type: stolenDevices[serialNumber] ? stolenDevices[serialNumber].type : 'N/A',
-                added_date: new Date()  // Hozzáadás dátuma
-            }, { merge: true })  // Merge=True, hogy ne törölje a meglévő mezőket
-            .then(() => {
-                console.log("Adatok frissítve a Firestore-ban.");
-            })
-            .catch((error) => {
-                console.error("Hiba a frissítéskor: ", error);
-            });
-        }
-    </script>
+    <button onclick="checkSerialNumber()">Ellenőriz</button>
 </body>
 </html>
