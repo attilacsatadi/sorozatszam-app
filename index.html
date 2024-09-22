@@ -3,15 +3,7 @@
 <head>
     <title>Sorozatszám Ellenőrző</title>
     <script>
-        // Flask szerver URL-je
-        const SERVER_URL = 'http://localhost:5000'; // Cseréld le, ha a szerver más gépen fut
-
-        // Helyi adatok (offline)
-        const stolenDevices = {
-            "123456": { type: "Laptop", found: false },
-            "654321": { type: "Telefont", found: true }
-        };
-
+        // Relatív URL-ek használata, mivel a kliens oldal a szerver által szolgáltatott
         async function checkSerialNumber() {
             const serialNumber = document.getElementById('serialNumber').value.trim();
             
@@ -20,7 +12,11 @@
                 return;
             }
 
-            // Offline ellenőrzés
+            // Offline ellenőrzés (helyi adatok, opcionális)
+            const stolenDevices = {
+                "123456": { type: "Laptop", found: false },
+                "654321": { type: "Telefont", found: true }
+            };
             if (stolenDevices[serialNumber]) {
                 alert("A megadott sorozatszám szerepel az ellopott listán (offline).");
             } else {
@@ -29,7 +25,12 @@
 
             // Online ellenőrzés
             try {
-                const response = await fetch(`${SERVER_URL}/search/${serialNumber}`);
+                const response = await fetch(`/search/${serialNumber}`, {
+                    method: 'GET',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
                 if (response.status === 200) {
                     alert("A megadott sorozatszám szerepel az ellopott listán (online).");
                 } else if (response.status === 404) {
