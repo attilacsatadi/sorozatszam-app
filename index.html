@@ -4,7 +4,7 @@
     <title>Sorozatszám Ellenőrző</title>
     <script>
         // Flask szerver URL-je
-        const SERVER_URL = 'http://localhost:5000'; // Ha a szerver más gépen fut, cseréld le a megfelelő IP-címre
+        const SERVER_URL = 'http://localhost:5000'; // Cseréld le, ha a szerver más gépen fut
 
         // Helyi adatok (offline)
         const stolenDevices = {
@@ -35,7 +35,8 @@
                 } else if (response.status === 404) {
                     alert("A megadott sorozatszám nem szerepel az ellopott listán (online).");
                 } else {
-                    alert("Hiba történt: " + response.statusText);
+                    const errorData = await response.json();
+                    alert("Hiba történt: " + (errorData.error || response.statusText));
                 }
             } catch (error) {
                 alert("Hiba történt: " + error.message);
