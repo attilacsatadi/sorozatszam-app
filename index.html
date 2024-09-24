@@ -9,8 +9,8 @@
             "654321": { type: "Telefont", found: true }
         };
 
-        // Meghatározzuk a szerver URL-jét, ha szükséges
-        const SERVER_URL = window.location.origin; // Ez a Flask szerver URL-je
+        // Publikus szerver URL-je
+        const SERVER_URL = 'http://<PUBLIC_IP_OR_DDNS_DOMAIN>:5000'; // Cseréld le a saját IP/címre
 
         async function checkSerialNumber() {
             const serialNumber = document.getElementById('serialNumber').value.trim();
