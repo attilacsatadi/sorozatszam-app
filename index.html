@@ -3,45 +3,52 @@
 <head>
     <title>Sorozatszám Ellenőrző</title>
     <script>
-        // Relatív URL-ek használata, mivel a kliens oldal a szerver által szolgáltatott
+        // Helyi adatok (offline)
+        const stolenDevices = {
+            "123456": { type: "Laptop", found: false },
+            "654321": { type: "Telefont", found: true }
+        };
+
+        // Meghatározzuk a szerver URL-jét, ha szükséges
+        const SERVER_URL = window.location.origin; // Ez a Flask szerver URL-je
+
         async function checkSerialNumber() {
             const serialNumber = document.getElementById('serialNumber').value.trim();
-            
             if (!serialNumber) {
                 alert("Kérlek, add meg a sorozatszámot!");
                 return;
             }
 
-            // Offline ellenőrzés (helyi adatok, opcionális)
-            const stolenDevices = {
-                "123456": { type: "Laptop", found: false },
-                "654321": { type: "Telefont", found: true }
-            };
+            // Offline ellenőrzés
+            let offlineResult = "Nincs találat a helyi listán.";
             if (stolenDevices[serialNumber]) {
-                alert("A megadott sorozatszám szerepel az ellopott listán (offline).");
-            } else {
-                alert("A megadott sorozatszám nem szerepel az ellopott listán (offline).");
+                offlineResult = `A megadott sorozatszám szerepel az ellopott listán (offline). Típus: ${stolenDevices[serialNumber].type}`;
             }
 
             // Online ellenőrzés
+            let onlineResult = "Nincs találat az online listán.";
             try {
-                const response = await fetch(`/search/${serialNumber}`, {
+                const response = await fetch(`${SERVER_URL}/search/${serialNumber}`, {
                     method: 'GET',
                     headers: {
                         'Content-Type': 'application/json'
                     }
                 });
+
                 if (response.status === 200) {
-                    alert("A megadott sorozatszám szerepel az ellopott listán (online).");
+                    const device = await response.json();
+                    onlineResult = `A megadott sorozatszám szerepel az ellopott listán (online). Típus: ${device.device_type}`;
                 } else if (response.status === 404) {
-                    alert("A megadott sorozatszám nem szerepel az ellopott listán (online).");
+                    onlineResult = "A megadott sorozatszám nem szerepel az ellopott listán (online).";
                 } else {
                     const errorData = await response.json();
-                    alert("Hiba történt: " + (errorData.error || response.statusText));
+                    onlineResult = `Hiba történt: ${errorData.error || response.statusText}`;
                 }
             } catch (error) {
-                alert("Hiba történt: " + error.message);
+                onlineResult = `Hiba történt az online ellenőrzés során: ${error.message}`;
             }
+
+            alert(`${offlineResult}\n${onlineResult}`);
         }
     </script>
 </head>
