@@ -1,3 +1,4 @@
+# Isolated read-only production-state validation; no transaction is broadcast.
 name: temporary-reserve-hyusd-production-binding-20260818
 
 on:
