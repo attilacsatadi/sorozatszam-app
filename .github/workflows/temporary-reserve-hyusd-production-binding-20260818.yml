@@ -5,6 +5,10 @@ on:
     branches: [main]
     paths:
       - .github/workflows/temporary-reserve-hyusd-production-binding-20260818.yml
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/temporary-reserve-hyusd-production-binding-20260818.yml
 
 permissions:
   contents: write
@@ -30,8 +34,6 @@ jobs:
       RESULT_DIR: .research/results/reserve-hyusd-production-binding-20260818
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: main
 
       - name: Install and verify Foundry
         shell: bash
@@ -50,7 +52,27 @@ jobs:
           CAST: ${{ github.workspace }}/foundry-bin/cast
         run: bash .research/tools/reserve_hyusd_binding_20260818.sh
 
-      - name: Persist result
+      - name: Seal result
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar -czf reserve-hyusd-production-binding-20260818.tar.gz "$RESULT_DIR"
+          sha256sum reserve-hyusd-production-binding-20260818.tar.gz > reserve-hyusd-production-binding-20260818.tar.gz.sha256
+          for run in 1 2 3; do tar -tzf reserve-hyusd-production-binding-20260818.tar.gz >/dev/null; done
+
+      - name: Upload result
+        uses: actions/upload-artifact@v4
+        with:
+          name: reserve-hyusd-production-binding-20260818
+          path: |
+            reserve-hyusd-production-binding-20260818.tar.gz
+            reserve-hyusd-production-binding-20260818.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+      - name: Persist result on direct push
+        if: github.event_name == 'push'
         shell: bash
         run: |
           set -euo pipefail
