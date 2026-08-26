@@ -1,0 +1,161 @@
+name: Makina R5 upstream-only bootstrap
+
+on:
+  push:
+    branches:
+      - makina-bootstrap-r5-20260826
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CORE_SHA: fe2d7e28c60829f2585cd683b56c6c9a185eb0ea
+  PERIPHERY_SHA: 392796cfaf86d8dc0e5b51f9530f6989211426e1
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Clone exact untouched public sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p bundle/sources bundle/evidence bundle/toolchain
+          git clone --branch v1.2.0 --depth 1 --recurse-submodules --shallow-submodules \
+            https://github.com/MakinaHQ/makina-core.git bundle/sources/makina-core
+          git clone --branch v1.2.0 --depth 1 --recurse-submodules --shallow-submodules \
+            https://github.com/MakinaHQ/makina-periphery.git bundle/sources/makina-periphery
+          git clone --depth 1 https://github.com/MakinaHQ/makina-integrations.git bundle/sources/makina-integrations
+          git clone --depth 1 https://github.com/MakinaHQ/transpiler.git bundle/sources/transpiler
+
+          core_actual="$(git -C bundle/sources/makina-core rev-parse HEAD)"
+          periphery_actual="$(git -C bundle/sources/makina-periphery rev-parse HEAD)"
+          periphery_core_actual="$(git -C bundle/sources/makina-periphery/lib/makina-core rev-parse HEAD)"
+          integrations_actual="$(git -C bundle/sources/makina-integrations rev-parse HEAD)"
+          transpiler_actual="$(git -C bundle/sources/transpiler rev-parse HEAD)"
+
+          test "$core_actual" = "$CORE_SHA"
+          test "$periphery_actual" = "$PERIPHERY_SHA"
+          test "$periphery_core_actual" = "$CORE_SHA"
+
+          printf '%s\n' \
+            "core=$core_actual" \
+            "periphery=$periphery_actual" \
+            "periphery_core_submodule=$periphery_core_actual" \
+            "integrations=$integrations_actual" \
+            "transpiler=$transpiler_actual" \
+            > bundle/evidence/source-pins.txt
+
+      - name: Install exact project dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          for repo in bundle/sources/makina-core bundle/sources/makina-periphery; do
+            (
+              cd "$repo"
+              yarn --frozen-lockfile || yarn
+            ) 2>&1 | tee "${GITHUB_WORKSPACE}/bundle/evidence/$(basename "$repo")-yarn.log"
+          done
+
+      - name: Build stock releases and warm compiler cache
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          (
+            cd bundle/sources/makina-core
+            forge build --sizes
+          ) 2>&1 | tee "${GITHUB_WORKSPACE}/bundle/evidence/core-build.log"
+          core_rc=${PIPESTATUS[0]}
+          (
+            cd bundle/sources/makina-periphery
+            forge build --sizes
+          ) 2>&1 | tee "${GITHUB_WORKSPACE}/bundle/evidence/periphery-build.log"
+          periphery_rc=${PIPESTATUS[0]}
+          printf '{"core":%s,"periphery":%s}\n' "$core_rc" "$periphery_rc" > bundle/evidence/build-status.json
+          exit 0
+
+      - name: Run stock non-fork tests
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          (
+            cd bundle/sources/makina-core
+            FOUNDRY_FUZZ_RUNS=128 forge test --no-match-path 'test/fork/**' -vvv
+          ) 2>&1 | tee "${GITHUB_WORKSPACE}/bundle/evidence/core-stock-tests.log"
+          core_rc=${PIPESTATUS[0]}
+          (
+            cd bundle/sources/makina-periphery
+            FOUNDRY_FUZZ_RUNS=128 forge test --no-match-path 'test/fork/**' -vvv
+          ) 2>&1 | tee "${GITHUB_WORKSPACE}/bundle/evidence/periphery-stock-tests.log"
+          periphery_rc=${PIPESTATUS[0]}
+          printf '{"core":%s,"periphery":%s}\n' "$core_rc" "$periphery_rc" > bundle/evidence/test-status.json
+          exit 0
+
+      - name: Copy offline toolchain
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p bundle/toolchain/foundry bundle/toolchain/svm
+          for bin in forge cast anvil chisel; do
+            src="$(command -v "$bin" || true)"
+            if [ -n "$src" ]; then cp -L "$src" bundle/toolchain/foundry/; fi
+          done
+          if [ -d "$HOME/.svm" ]; then cp -a "$HOME/.svm/." bundle/toolchain/svm/; fi
+          {
+            forge --version
+            cast --version
+            node --version
+            yarn --version
+            python3 --version
+            uname -a
+          } > bundle/evidence/toolchain.txt
+
+      - name: Remove Git metadata and create integrity manifest
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          find bundle/sources -name .git -type d -prune -exec rm -rf {} + || true
+          find bundle/sources -name .git -type f -delete || true
+          python3 - <<'PY'
+          import hashlib, json
+          from pathlib import Path
+          root = Path('bundle')
+          rows = []
+          for p in sorted(x for x in root.rglob('*') if x.is_file()):
+              data = p.read_bytes()
+              rows.append({'path': str(p.relative_to(root)), 'size': len(data), 'sha256': hashlib.sha256(data).hexdigest()})
+          (root / 'MANIFEST.json').write_text(json.dumps({'schema': 1, 'public_upstream_only': True, 'files': rows}, indent=2, sort_keys=True) + '\n')
+          PY
+          (cd bundle && find . -type f ! -name SHA256SUMS.txt -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS.txt)
+          tar -C bundle -czf makina-r5-upstream-offline-bundle.tar.gz .
+          sha256sum makina-r5-upstream-offline-bundle.tar.gz > makina-r5-upstream-offline-bundle.tar.gz.sha256
+
+      - name: Upload untouched upstream and offline toolchain
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: makina-r5-upstream-offline-${{ github.sha }}
+          path: |
+            makina-r5-upstream-offline-bundle.tar.gz
+            makina-r5-upstream-offline-bundle.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 14
