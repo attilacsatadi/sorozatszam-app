@@ -1,0 +1,79 @@
+name: Protocol Readonly State 20260827
+
+on:
+  push:
+    branches:
+      - protocol-readonly-state-20260827
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+
+      - name: Query public Ethereum state
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          RPC=""
+          for candidate in \
+            https://ethereum-rpc.publicnode.com \
+            https://eth.llamarpc.com \
+            https://1rpc.io/eth \
+            https://rpc.flashbots.net; do
+            if timeout 20 cast chain-id --rpc-url "$candidate" >/dev/null 2>&1; then
+              RPC="$candidate"
+              break
+            fi
+          done
+          test -n "$RPC"
+
+          printf 'queried_at_utc=%s\n' "$(date -u +%FT%TZ)" > evidence/state.txt
+          printf 'chain_id=%s\n' "$(cast chain-id --rpc-url "$RPC")" >> evidence/state.txt
+          printf 'latest_block=%s\n' "$(cast block-number --rpc-url "$RPC")" >> evidence/state.txt
+
+          query_pdv() {
+            local label="$1" addr="$2"
+            local share
+            {
+              echo "[$label]"
+              echo "address=$addr"
+              echo "codehash=$(cast codehash --rpc-url "$RPC" "$addr")"
+              echo "migrated=$(cast call --rpc-url "$RPC" "$addr" 'migrated()(bool)')"
+              echo "shareLimit=$(cast call --rpc-url "$RPC" "$addr" 'shareLimit()(uint256)')"
+              echo "maxDeposit=$(cast call --rpc-url "$RPC" "$addr" 'maxDeposit()(uint256)' || true)"
+              echo "totalAssets=$(cast call --rpc-url "$RPC" "$addr" 'totalAssets()(uint256)')"
+              echo "shareToken=$(cast call --rpc-url "$RPC" "$addr" 'shareToken()(address)')"
+              echo "depositToken=$(cast call --rpc-url "$RPC" "$addr" 'depositToken()(address)')"
+              echo "accountingToken=$(cast call --rpc-url "$RPC" "$addr" 'accountingToken()(address)')"
+              echo "whitelistMode=$(cast call --rpc-url "$RPC" "$addr" 'whitelistMode()(bool)')"
+              echo
+            } >> evidence/state.txt
+            share=$(cast call --rpc-url "$RPC" "$addr" 'shareToken()(address)')
+            {
+              echo "[$label.share]"
+              echo "address=$share"
+              echo "totalSupply=$(cast call --rpc-url "$RPC" "$share" 'totalSupply()(uint256)')"
+              echo "owner=$(cast call --rpc-url "$RPC" "$share" 'owner()(address)' || true)"
+              echo
+            } >> evidence/state.txt
+          }
+
+          query_pdv DUSD_PDV 0x5df4cb0aaae0fcc9de3f41e72348609e30a49c44
+          query_pdv DETH_PDV 0xefc8e0fce12c164eafcb588915c6f0ca7ca41a53
+          sha256sum evidence/state.txt > evidence/SHA256SUMS.txt
+          cat evidence/state.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: protocol-readonly-state-${{ github.sha }}
+          path: evidence
+          if-no-files-found: error
+          retention-days: 7
