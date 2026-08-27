@@ -1,0 +1,74 @@
+name: Public Chain Receipt Snapshot 20260827
+
+on:
+  push:
+    branches:
+      - protocol-readonly-state-20260827
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Fetch public transaction receipts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          cat > /tmp/fetch.py <<'PY'
+          import json
+          import time
+          import urllib.request
+
+          RPCS = [
+              "https://ethereum-rpc.publicnode.com",
+              "https://eth.llamarpc.com",
+              "https://1rpc.io/eth",
+          ]
+          TXS = [
+              "0x0f41e52fab6a3419015f403e6cf40bde858034e1ad52f2b704af48d138c49dcf",
+              "0x25a4baad02bbe395ada6050d11a3f6476678049d5c63adf983d64d6d9a8f216a",
+              "0x65e505d38db46863cd83ca01c1c5a04161f282c7cac30ade53709adb7158ffec",
+          ]
+
+          def rpc(method, params):
+              payload = json.dumps({"jsonrpc":"2.0","id":1,"method":method,"params":params}).encode()
+              last = None
+              for attempt in range(6):
+                  for url in RPCS:
+                      try:
+                          req = urllib.request.Request(url, data=payload, headers={"Content-Type":"application/json","User-Agent":"receipt-snapshot/1.0"})
+                          with urllib.request.urlopen(req, timeout=40) as r:
+                              obj = json.load(r)
+                          if "error" in obj:
+                              raise RuntimeError(obj["error"])
+                          return obj["result"]
+                      except Exception as exc:
+                          last = exc
+                  time.sleep(min(2 ** attempt, 15))
+              raise RuntimeError(last)
+
+          out = {}
+          for tx in TXS:
+              receipt = rpc("eth_getTransactionReceipt", [tx])
+              transaction = rpc("eth_getTransactionByHash", [tx])
+              block = rpc("eth_getBlockByNumber", [receipt["blockNumber"], False]) if receipt else None
+              out[tx] = {"transaction": transaction, "receipt": receipt, "block": block}
+          with open("evidence/receipts.json", "w") as f:
+              json.dump(out, f, indent=2)
+          print(json.dumps({k: {"block": v["receipt"]["blockNumber"], "logs": len(v["receipt"]["logs"])} for k,v in out.items()}, indent=2))
+          PY
+          python /tmp/fetch.py | tee evidence/run.log
+          (cd evidence && sha256sum receipts.json run.log > SHA256SUMS.txt)
+
+      - name: Upload snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: public-chain-receipt-snapshot-${{ github.sha }}
+          path: evidence
+          retention-days: 7
+          if-no-files-found: error
