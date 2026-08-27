@@ -1,0 +1,113 @@
+name: Protocol User Endpoints Readonly 20260827
+
+on:
+  push:
+    branches:
+      - protocol-readonly-state-20260827
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+
+      - name: Query public Ethereum state with eth_call only
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          RPC=""
+          for candidate in \
+            https://ethereum-rpc.publicnode.com \
+            https://eth.llamarpc.com \
+            https://1rpc.io/eth \
+            https://rpc.flashbots.net; do
+            if timeout 20 cast chain-id --rpc-url "$candidate" >/dev/null 2>&1; then
+              RPC="$candidate"
+              break
+            fi
+          done
+          test -n "$RPC"
+
+          BEACON_SLOT=0xa3f0ad74e5423aebfd80d3ef4346578335a9a72aeaee59ff6cb3582b35133d50
+          q() { cast call --rpc-url "$RPC" "$1" "$2" 2>&1 || true; }
+          beacon_of() {
+            local raw
+            raw=$(cast storage --rpc-url "$RPC" "$1" "$BEACON_SLOT")
+            echo "0x${raw:26:40}"
+          }
+          implementation_of() {
+            local beacon
+            beacon=$(beacon_of "$1")
+            q "$beacon" 'implementation()(address)'
+          }
+
+          {
+            echo "queried_at_utc=$(date -u +%FT%TZ)"
+            echo "chain_id=$(cast chain-id --rpc-url "$RPC")"
+            echo "latest_block=$(cast block-number --rpc-url "$RPC")"
+            echo
+          } > evidence/state.txt
+
+          query_strategy() {
+            local label="$1" machine="$2" depositor="$3" redeemer="$4"
+            {
+              echo "[$label]"
+              echo "machine=$machine"
+              echo "machine.depositor=$(q "$machine" 'depositor()(address)')"
+              echo "machine.redeemer=$(q "$machine" 'redeemer()(address)')"
+              echo "machine.restrictedAccountingMode=$(q "$machine" 'restrictedAccountingMode()(bool)')"
+              echo "machine.beacon=$(beacon_of "$machine")"
+              echo "machine.implementation=$(implementation_of "$machine")"
+              echo "depositor=$depositor"
+              echo "depositor.codehash=$(cast codehash --rpc-url "$RPC" "$depositor")"
+              echo "depositor.machine=$(q "$depositor" 'machine()(address)')"
+              echo "depositor.isWhitelistEnabled=$(q "$depositor" 'isWhitelistEnabled()(bool)')"
+              echo "depositor.beacon=$(beacon_of "$depositor")"
+              echo "depositor.implementation=$(implementation_of "$depositor")"
+              echo "redeemer=$redeemer"
+              echo "redeemer.codehash=$(cast codehash --rpc-url "$RPC" "$redeemer")"
+              echo "redeemer.machine=$(q "$redeemer" 'machine()(address)')"
+              echo "redeemer.isWhitelistEnabled=$(q "$redeemer" 'isWhitelistEnabled()(bool)')"
+              echo "redeemer.finalizationDelay=$(q "$redeemer" 'finalizationDelay()(uint256)')"
+              echo "redeemer.minRedeemAmount=$(q "$redeemer" 'minRedeemAmount()(uint256)')"
+              echo "redeemer.nextRequestId=$(q "$redeemer" 'nextRequestId()(uint256)')"
+              echo "redeemer.lastFinalizedRequestId=$(q "$redeemer" 'lastFinalizedRequestId()(uint256)')"
+              echo "redeemer.redeemFeeRate=$(q "$redeemer" 'redeemFeeRate()(uint256)')"
+              echo "redeemer.maxRedeemFeeRate=$(q "$redeemer" 'maxRedeemFeeRate()(uint256)')"
+              echo "redeemer.beacon=$(beacon_of "$redeemer")"
+              echo "redeemer.implementation=$(implementation_of "$redeemer")"
+              echo
+            } >> evidence/state.txt
+          }
+
+          query_strategy DUSD \
+            0x6b006870c83b1cd49e766ac9209f8d68763df721 \
+            0x94B1828F91c150C5E6776198e170aCa4304903d7 \
+            0x1303c26cFE06bac5bfEE29907f37919643DEF75c
+
+          query_strategy DETH \
+            0x0447d0ad7fd6a3409b48ecbb9ddb075c1e11d735 \
+            0x9662d85fdBc68F2218974aabdcdE5e61B59132B0 \
+            0xE44b62dD3F6379D6d14c38081fe1499D1a56250F
+
+          query_strategy DBIT \
+            0xfcbe132452b6caa32addd4768db8fa02af73d841 \
+            0x1276EB5e4e04cc495017e960EdFeAe8289d30D59 \
+            0x5DB8ff7C3F3F259682508c601B2F412A3f6B3e72
+
+          sha256sum evidence/state.txt > evidence/SHA256SUMS.txt
+          cat evidence/state.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: protocol-user-endpoints-${{ github.sha }}
+          path: evidence
+          if-no-files-found: error
+          retention-days: 7
