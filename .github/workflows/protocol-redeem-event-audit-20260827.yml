@@ -1,0 +1,165 @@
+name: Protocol Redeem Event Audit 20260827
+
+on:
+  push:
+    branches:
+      - protocol-readonly-state-20260827
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+
+      - name: Query and correlate public redemption events
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          RPC=""
+          for candidate in \
+            https://ethereum-rpc.publicnode.com \
+            https://eth.llamarpc.com \
+            https://1rpc.io/eth \
+            https://rpc.flashbots.net; do
+            if timeout 20 cast chain-id --rpc-url "$candidate" >/dev/null 2>&1; then
+              RPC="$candidate"
+              break
+            fi
+          done
+          test -n "$RPC"
+
+          export RPC
+          export FINALIZED_TOPIC=$(cast keccak 'RedeemRequestsFinalized(uint256,uint256,uint256,uint256)')
+          export REDEEM_TOPIC=$(cast keccak 'Redeem(address,address,uint256,uint256)')
+          export LATEST_BLOCK=$(cast block-number --rpc-url "$RPC")
+
+          python3 - <<'PY'
+          import json, os, time, urllib.request
+
+          rpc = os.environ['RPC']
+          latest = int(os.environ['LATEST_BLOCK'])
+          finalized_topic = os.environ['FINALIZED_TOPIC'].lower()
+          redeem_topic = os.environ['REDEEM_TOPIC'].lower()
+          start = 23_500_000
+          chunk = 20_000
+
+          strategies = {
+              'DUSD': {
+                  'machine': '0x6b006870c83b1cd49e766ac9209f8d68763df721',
+                  'redeemer': '0x1303c26cfe06bac5bfee29907f37919643def75c',
+              },
+              'DETH': {
+                  'machine': '0x0447d0ad7fd6a3409b48ecbb9ddb075c1e11d735',
+                  'redeemer': '0xe44b62dd3f6379d6d14c38081fe1499d1a56250f',
+              },
+          }
+
+          def rpc_call(method, params, retries=5):
+              payload = json.dumps({'jsonrpc':'2.0','id':1,'method':method,'params':params}).encode()
+              for n in range(retries):
+                  try:
+                      req = urllib.request.Request(rpc, data=payload, headers={'Content-Type':'application/json'})
+                      with urllib.request.urlopen(req, timeout=45) as r:
+                          obj = json.load(r)
+                      if 'error' in obj:
+                          raise RuntimeError(obj['error'])
+                      return obj['result']
+                  except Exception:
+                      if n + 1 == retries:
+                          raise
+                      time.sleep(1 + n)
+
+          raw = []
+          addresses = [v for s in strategies.values() for v in (s['machine'], s['redeemer'])]
+          for frm in range(start, latest + 1, chunk):
+              to = min(latest, frm + chunk - 1)
+              filt = {
+                  'fromBlock': hex(frm),
+                  'toBlock': hex(to),
+                  'address': addresses,
+                  'topics': [[finalized_topic, redeem_topic]],
+              }
+              raw.extend(rpc_call('eth_getLogs', [filt]))
+
+          by_tx = {}
+          for log in raw:
+              tx = log['transactionHash'].lower()
+              rec = by_tx.setdefault(tx, {'block': int(log['blockNumber'],16), 'logs': []})
+              rec['logs'].append(log)
+
+          rows = []
+          for tx, rec in sorted(by_tx.items(), key=lambda kv: kv[1]['block']):
+              finalized = None
+              machine_redeem = None
+              strategy = None
+              for name, cfg in strategies.items():
+                  addrs = {cfg['machine'].lower(), cfg['redeemer'].lower()}
+                  if any(l['address'].lower() in addrs for l in rec['logs']):
+                      strategy = name
+              for log in rec['logs']:
+                  topic0 = log['topics'][0].lower()
+                  data = log['data'][2:]
+                  words = [int(data[i:i+64], 16) for i in range(0, len(data), 64)] if data else []
+                  if topic0 == finalized_topic:
+                      finalized = {
+                          'fromRequestId': int(log['topics'][1],16),
+                          'toRequestId': int(log['topics'][2],16),
+                          'totalShares': words[0],
+                          'totalAssets': words[1],
+                          'address': log['address'],
+                      }
+                  elif topic0 == redeem_topic:
+                      machine_redeem = {
+                          'assets': words[0],
+                          'shares': words[1],
+                          'address': log['address'],
+                      }
+              if finalized and machine_redeem:
+                  rows.append({
+                      'strategy': strategy,
+                      'block': rec['block'],
+                      'transactionHash': tx,
+                      'fromRequestId': finalized['fromRequestId'],
+                      'toRequestId': finalized['toRequestId'],
+                      'totalShares': finalized['totalShares'],
+                      'queueTotalAssets': finalized['totalAssets'],
+                      'machineRedeemAssets': machine_redeem['assets'],
+                      'returnedExcess': machine_redeem['assets'] - finalized['totalAssets'],
+                      'sharesMatch': machine_redeem['shares'] == finalized['totalShares'],
+                  })
+
+          summary = {
+              'queriedAtLatestBlock': latest,
+              'fromBlock': start,
+              'rawLogCount': len(raw),
+              'matchedFinalizations': len(rows),
+              'positiveExcessCount': sum(r['returnedExcess'] > 0 for r in rows),
+              'totalReturnedExcess': sum(r['returnedExcess'] for r in rows),
+              'maxReturnedExcess': max([r['returnedExcess'] for r in rows], default=0),
+              'rows': rows,
+          }
+          with open('evidence/redeem-event-audit.json','w') as f:
+              json.dump(summary, f, indent=2)
+          with open('evidence/raw-logs.json','w') as f:
+              json.dump(raw, f)
+          print(json.dumps({k:v for k,v in summary.items() if k != 'rows'}, indent=2))
+          for row in rows:
+              if row['returnedExcess'] > 0:
+                  print(json.dumps(row))
+          PY
+
+          sha256sum evidence/* > evidence/SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: protocol-redeem-event-audit-${{ github.sha }}
+          path: evidence
+          if-no-files-found: error
+          retention-days: 7
