@@ -1,0 +1,89 @@
+name: Blockscout Redeem Event Snapshot 20260827
+
+on:
+  push:
+    branches:
+      - protocol-readonly-state-20260827
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Correlate recent public redemption logs
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          python3 - <<'PY'
+          import json, time, urllib.parse, urllib.request
+          from datetime import datetime, timezone
+
+          TOPIC_FINALIZED='0x9f608d1f0caea0652897e16bb8ce9eebacddddafe4bbe7f56e54abb04209ee33'
+          TOPIC_REDEEM='0x3f693fff038bb8a046aa76d9516190ac7444f7d69cf952c4cbdc086fdef2d6fc'
+          TOPIC_TRANSFER='0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef'
+          RPCS=['https://ethereum-rpc.publicnode.com','https://rpc.flashbots.net','https://eth.llamarpc.com','https://1rpc.io/eth','https://eth.drpc.org']
+          CONFIG={
+            'DUSD':{'redeemer':'0x1303c26cfe06bac5bfee29907f37919643def75c','machine':'0x6b006870c83b1cd49e766ac9209f8d68763df721','token':'0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48','decimals':6},
+            'DETH':{'redeemer':'0xe44b62dd3f6379d6d14c38081fe1499d1a56250f','machine':'0x0447d0ad7fd6a3409b48ecbb9ddb075c1e11d735','token':'0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2','decimals':18},
+          }
+          def get_json(url):
+            req=urllib.request.Request(url,headers={'User-Agent':'Mozilla/5.0 readonly-log-snapshot/1.0'})
+            with urllib.request.urlopen(req,timeout=60) as r: return json.load(r)
+          def rpc(method,params):
+            payload=json.dumps({'jsonrpc':'2.0','id':1,'method':method,'params':params}).encode()
+            last=None
+            for attempt in range(6):
+              for url in RPCS:
+                try:
+                  req=urllib.request.Request(url,data=payload,headers={'Content-Type':'application/json','User-Agent':'Mozilla/5.0 readonly-log-snapshot/1.0'})
+                  with urllib.request.urlopen(req,timeout=45) as r: obj=json.load(r)
+                  if 'error' in obj: raise RuntimeError(obj['error'])
+                  return obj['result']
+                except Exception as e: last=e
+              time.sleep(min(2**attempt,10))
+            raise RuntimeError(last)
+          def words(data):
+            h=data[2:] if data.startswith('0x') else data
+            return [int(h[i:i+64],16) for i in range(0,len(h),64)] if h else []
+          def topic_addr(a): return '0x'+'0'*24+a[2:].lower()
+
+          all_rows=[]; raw={}
+          for name,cfg in CONFIG.items():
+            q=urllib.parse.urlencode({'module':'logs','action':'getLogs','fromBlock':'24000000','toBlock':'latest','address':cfg['redeemer'],'topic0':TOPIC_FINALIZED})
+            obj=get_json('https://eth.blockscout.com/api?'+q)
+            if str(obj.get('status'))!='1': raise RuntimeError(obj)
+            logs=obj['result']; raw[name]=logs
+            # newest first; enough to prove deployed occurrence while minimizing public RPC load
+            logs=sorted(logs,key=lambda x:int(x['blockNumber'],16),reverse=True)[:40]
+            for log in logs:
+              txh=log['transactionHash']; receipt=rpc('eth_getTransactionReceipt',[txh])
+              fw=words(log['data']); total_shares,capped=fw[0],fw[1]
+              gross=None; gross_shares=None; returned=0
+              for l in receipt['logs']:
+                addr=l['address'].lower(); topics=[x.lower() for x in l.get('topics',[])]
+                if addr==cfg['machine'] and topics and topics[0]==TOPIC_REDEEM:
+                  w=words(l['data']); gross,gross_shares=w[0],w[1]
+                if addr==cfg['token'] and len(topics)>=3 and topics[0]==TOPIC_TRANSFER and topics[1]==topic_addr(cfg['redeemer']) and topics[2]==topic_addr(cfg['machine']):
+                  returned+=words(l['data'])[0]
+              if gross is None: raise RuntimeError('missing Machine Redeem '+txh)
+              excess=gross-capped
+              all_rows.append({'strategy':name,'block':int(log['blockNumber'],16),'txHash':txh,'fromRequestId':int(log['topics'][1],16),'toRequestId':int(log['topics'][2],16),'totalShares':total_shares,'grossAssets':gross,'cappedAssets':capped,'returnedExcess':excess,'returnedTransfer':returned,'transferMatches':returned==excess,'sharesMatch':gross_shares==total_shares,'excessHuman':excess/(10**cfg['decimals'])})
+          positives=[r for r in all_rows if r['returnedExcess']>0]
+          summary={'queriedAtUtc':datetime.now(timezone.utc).isoformat(),'rowsChecked':len(all_rows),'positiveCount':len(positives),'allTransferMatches':all(r['transferMatches'] for r in all_rows),'allSharesMatch':all(r['sharesMatch'] for r in all_rows),'positiveEvents':positives}
+          with open('evidence/summary.json','w') as f: json.dump(summary,f,indent=2)
+          with open('evidence/rows.json','w') as f: json.dump(all_rows,f,indent=2)
+          with open('evidence/raw-blockscout-logs.json','w') as f: json.dump(raw,f,indent=2)
+          print(json.dumps(summary,indent=2))
+          PY
+          (cd evidence && sha256sum summary.json rows.json raw-blockscout-logs.json > SHA256SUMS.txt)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: blockscout-redeem-event-snapshot-${{ github.sha }}
+          path: evidence
+          retention-days: 7
+          if-no-files-found: error
