@@ -1,0 +1,66 @@
+name: Protocol Implementation Bytecode Readonly 20260827
+
+on:
+  push:
+    branches:
+      - protocol-readonly-state-20260827
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+
+      - name: Snapshot public implementation bytecode
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          RPC=""
+          for candidate in \
+            https://ethereum-rpc.publicnode.com \
+            https://eth.llamarpc.com \
+            https://1rpc.io/eth \
+            https://rpc.flashbots.net; do
+            if timeout 20 cast chain-id --rpc-url "$candidate" >/dev/null 2>&1; then
+              RPC="$candidate"
+              break
+            fi
+          done
+          test -n "$RPC"
+
+          cat > evidence/metadata.txt <<EOF
+          queried_at_utc=$(date -u +%FT%TZ)
+          chain_id=$(cast chain-id --rpc-url "$RPC")
+          latest_block=$(cast block-number --rpc-url "$RPC")
+          machine_implementation=0x6A759cae19Aa25b41237089eb0BbbC4473bFB996
+          depositor_implementation=0x0BFE61C05424A643301FD50981c4A61F2D5234a4
+          redeemer_implementation=0x49C4762Ab838F2E5d8252b69b90a1e8587A74511
+          EOF
+
+          cast code --rpc-url "$RPC" 0x6A759cae19Aa25b41237089eb0BbbC4473bFB996 > evidence/Machine.runtime.hex
+          cast code --rpc-url "$RPC" 0x0BFE61C05424A643301FD50981c4A61F2D5234a4 > evidence/DirectDepositor.runtime.hex
+          cast code --rpc-url "$RPC" 0x49C4762Ab838F2E5d8252b69b90a1e8587A74511 > evidence/AsyncRedeemer.runtime.hex
+
+          {
+            cat evidence/metadata.txt
+            for f in evidence/*.runtime.hex; do
+              echo "$(basename "$f").bytes=$((($(wc -c < "$f")-3)/2))"
+              echo "$(basename "$f").sha256=$(tr -d '\n' < "$f" | sha256sum | cut -d' ' -f1)"
+            done
+          } > evidence/summary.txt
+          sha256sum evidence/* > evidence/SHA256SUMS.txt
+          cat evidence/summary.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: protocol-implementation-bytecode-${{ github.sha }}
+          path: evidence
+          if-no-files-found: error
+          retention-days: 7
