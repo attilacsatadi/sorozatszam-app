@@ -1,0 +1,54 @@
+name: Makina v130 Upstream Bundle 20260827
+
+on:
+  push:
+    branches:
+      - protocol-readonly-state-20260827
+
+permissions:
+  contents: read
+
+jobs:
+  bundle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout exact upstream releases
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --branch v1.3.0 --depth 1 --recurse-submodules https://github.com/MakinaHQ/makina-core.git makina-core
+          git clone --branch v1.3.0 --depth 1 --recurse-submodules https://github.com/MakinaHQ/makina-periphery.git makina-periphery
+          git -C makina-core rev-parse HEAD > core.commit
+          git -C makina-periphery rev-parse HEAD > periphery.commit
+          git -C makina-core submodule update --init --recursive
+          git -C makina-periphery submodule update --init --recursive
+
+      - name: Install Foundry and dependencies
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+
+      - name: Build exact releases
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd makina-core && yarn --frozen-lockfile && forge build --sizes)
+          (cd makina-periphery && yarn --frozen-lockfile && forge build --sizes)
+
+      - name: Build evidence bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          cp core.commit periphery.commit evidence/
+          tar --exclude=.git -czf evidence/makina-core-v1.3.0.tgz makina-core
+          tar --exclude=.git -czf evidence/makina-periphery-v1.3.0.tgz makina-periphery
+          sha256sum evidence/* > evidence/SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: makina-v130-upstream-${{ github.sha }}
+          path: evidence
+          if-no-files-found: error
+          retention-days: 7
