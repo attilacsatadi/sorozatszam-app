@@ -1,0 +1,127 @@
+name: Makina SM Readonly Exposure 20260827
+
+on:
+  push:
+    branches:
+      - protocol-readonly-state-20260827
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+
+      - name: Query public Ethereum state with eth_call only
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          RPC=""
+          for candidate in \
+            https://ethereum-rpc.publicnode.com \
+            https://eth.llamarpc.com \
+            https://1rpc.io/eth \
+            https://rpc.flashbots.net; do
+            if timeout 20 cast chain-id --rpc-url "$candidate" >/dev/null 2>&1; then
+              RPC="$candidate"
+              break
+            fi
+          done
+          test -n "$RPC"
+
+          BASE_SLOT=0x55fe2a17e400bcd0e2125123a7fc955478e727b29a4c522f4f2bd95d961bd900
+          LAST_FEE_SLOT=$(python3 - <<'PY'
+          print(hex(int('55fe2a17e400bcd0e2125123a7fc955478e727b29a4c522f4f2bd95d961bd900',16)+8))
+          PY
+          )
+          LATEST_BLOCK=$(cast block-number --rpc-url "$RPC")
+          LATEST_TS_HEX=$(cast rpc --rpc-url "$RPC" eth_getBlockByNumber latest false | jq -r .timestamp)
+          LATEST_TS=$(cast to-dec "$LATEST_TS_HEX")
+
+          {
+            echo "queried_at_utc=$(date -u +%FT%TZ)"
+            echo "chain_id=$(cast chain-id --rpc-url "$RPC")"
+            echo "latest_block=$LATEST_BLOCK"
+            echo "latest_timestamp=$LATEST_TS"
+            echo "last_fee_storage_slot=$LAST_FEE_SLOT"
+            echo
+          } > evidence/state.txt
+
+          q() {
+            local addr="$1" sig="$2"
+            cast call --rpc-url "$RPC" "$addr" "$sig" 2>&1 || true
+          }
+
+          query_strategy() {
+            local label="$1" machine="$2" share="$3" sm="$4" fm="$5"
+            local raw last_fee elapsed
+            raw=$(cast storage --rpc-url "$RPC" "$machine" "$LAST_FEE_SLOT")
+            last_fee=$(cast to-dec "$raw")
+            elapsed=$((LATEST_TS-last_fee))
+            {
+              echo "[$label]"
+              echo "machine=$machine"
+              echo "share=$share"
+              echo "security_module=$sm"
+              echo "fee_manager=$fm"
+              echo "machine.codehash=$(cast codehash --rpc-url "$RPC" "$machine")"
+              echo "machine.feeManager=$(q "$machine" 'feeManager()(address)')"
+              echo "machine.recoveryMode=$(q "$machine" 'recoveryMode()(bool)')"
+              echo "machine.restrictedAccountingMode=$(q "$machine" 'restrictedAccountingMode()(bool)')"
+              echo "machine.feeMintCooldown=$(q "$machine" 'feeMintCooldown()(uint256)')"
+              echo "machine.maxFixedFeeAccrualRate=$(q "$machine" 'maxFixedFeeAccrualRate()(uint256)')"
+              echo "machine.lastTotalAum=$(q "$machine" 'lastTotalAum()(uint256)')"
+              echo "machine.lastGlobalAccountingTime=$(q "$machine" 'lastGlobalAccountingTime()(uint256)')"
+              echo "machine.lastMintedFeesTime=$last_fee"
+              echo "machine.elapsedSinceFeeMint=$elapsed"
+              echo "machine.updateTotalAum_eth_call=$(cast call --rpc-url "$RPC" --from 0x000000000000000000000000000000000000dEaD "$machine" 'updateTotalAum()(uint256)' 2>&1 || true)"
+              echo "share.totalSupply=$(q "$share" 'totalSupply()(uint256)')"
+              echo "sm.machine=$(q "$sm" 'machine()(address)')"
+              echo "sm.machineShare=$(q "$sm" 'machineShare()(address)')"
+              echo "sm.totalLockedAmount=$(q "$sm" 'totalLockedAmount()(uint256)')"
+              echo "sm.totalSupply=$(q "$sm" 'totalSupply()(uint256)')"
+              echo "sm.cooldownDuration=$(q "$sm" 'cooldownDuration()(uint256)')"
+              echo "sm.maxSlashable=$(q "$sm" 'maxSlashable()(uint256)')"
+              echo "sm.slashingMode=$(q "$sm" 'slashingMode()(bool)')"
+              echo "fm.machine=$(q "$fm" 'machine()(address)')"
+              echo "fm.securityModule=$(q "$fm" 'securityModule()(address)')"
+              echo "fm.mgmtFeeRatePerSecond=$(q "$fm" 'mgmtFeeRatePerSecond()(uint256)')"
+              echo "fm.smFeeRatePerSecond=$(q "$fm" 'smFeeRatePerSecond()(uint256)')"
+              echo "fm.perfFeeRate=$(q "$fm" 'perfFeeRate()(uint256)')"
+              echo
+            } >> evidence/state.txt
+          }
+
+          query_strategy DUSD \
+            0x6b006870c83b1cd49e766ac9209f8d68763df721 \
+            0x1e33e98af620f1d563fcd3cfd3c75ace841204ef \
+            0xb8431779dd9d5753b5a7F66afa3C65ABFD8c3fe1 \
+            0xa7f0121375dc52028e333f02715183a1d1a690a7
+
+          query_strategy DETH \
+            0x0447d0ad7fd6a3409b48ecbb9ddb075c1e11d735 \
+            0x871ab8e36cae9af35c6a3488b049965233deb7ed \
+            0x3147675eF8cCA992184CaF2D6c6ecFBd81c39347 \
+            0xa28a77ed5b51f232c2658b28c4f7998559174e7c
+
+          query_strategy DBIT \
+            0xfcbe132452b6caa32addd4768db8fa02af73d841 \
+            0x972966bcc17f7d818de4f27dc146ef539c231bdf \
+            0x1d1E4Dc88BC3a56cac0495aAa298CDe3fCEBf1b5 \
+            0x98072b0c7b0a618b277e62a0d2f52da249819c13
+
+          sha256sum evidence/state.txt > evidence/SHA256SUMS.txt
+          cat evidence/state.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: makina-sm-readonly-exposure-${{ github.sha }}
+          path: evidence
+          if-no-files-found: error
+          retention-days: 7
