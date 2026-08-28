@@ -1,0 +1,49 @@
+name: Bootstrap official .NET SDK 10.0.111
+
+on:
+  push:
+    branches:
+      - bootstrap/dotnet-sdk-10.0.111-20260828
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bootstrap-dotnet-sdk-10.0.111-20260828
+  cancel-in-progress: true
+
+jobs:
+  download:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Download and verify official SDK archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          url='https://builds.dotnet.microsoft.com/dotnet/Sdk/10.0.111/dotnet-sdk-10.0.111-linux-x64.tar.gz'
+          expected='aae221be96a3b510d5b6fffefc69d8ad2fa595a1430299419316bb71c65f260a457ca9af24d044e1709b28a9118798caafec535ccfe58f7767c5acb735c00392'
+          curl --fail --location --retry 5 --retry-delay 2 --output dotnet-sdk-10.0.111-linux-x64.tar.gz "$url"
+          actual="$(sha512sum dotnet-sdk-10.0.111-linux-x64.tar.gz | awk '{print $1}')"
+          test "$actual" = "$expected"
+          printf '%s  %s\n' "$actual" dotnet-sdk-10.0.111-linux-x64.tar.gz > SHA512SUMS.txt
+          {
+            echo 'version=10.0.111'
+            echo 'runtime=10.0.11'
+            echo "url=$url"
+            echo "sha512=$actual"
+            echo "bytes=$(stat -c %s dotnet-sdk-10.0.111-linux-x64.tar.gz)"
+            echo "retrieved_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } > provenance.txt
+
+      - name: Upload verified SDK archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: official-dotnet-sdk-10.0.111-linux-x64
+          path: |
+            dotnet-sdk-10.0.111-linux-x64.tar.gz
+            SHA512SUMS.txt
+            provenance.txt
+          compression-level: 0
+          retention-days: 1
