@@ -1,0 +1,40 @@
+name: Official .NET 10.0.400 SDK checksum ferry 20260829
+
+on:
+  push:
+    branches:
+      - ci/official-dotnet11-preview7-sdk-ferry-20260829
+    paths:
+      - .github/workflows/_temporary-official-dotnet10.0.400-sdk-ferry-20260829.yml
+
+permissions:
+  contents: read
+
+jobs:
+  fetch-official-sdk:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Download and verify official Microsoft SDK archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          url='https://builds.dotnet.microsoft.com/dotnet/Sdk/10.0.400/dotnet-sdk-10.0.400-linux-x64.tar.gz'
+          expected='1033977dd837150e0814cf0c5d5b17ceb63925fda7ba2158b47258a4bd7c048cf82eac3bc1166f3146f53124a3f5fba09db1de1260d2ce96399860303b404b48'
+          mkdir -p "$RUNNER_TEMP/official-dotnet10-sdk"
+          archive="$RUNNER_TEMP/official-dotnet10-sdk/dotnet-sdk-10.0.400-linux-x64.tar.gz"
+          curl --fail --location --retry 4 --retry-delay 3 --output "$archive" "$url"
+          actual="$(sha512sum "$archive" | awk '{print $1}')"
+          test "$actual" = "$expected"
+          printf 'source_url=%s\nsha512=%s\nbytes=%s\nutc=%s\n' \
+            "$url" "$actual" "$(stat -c %s "$archive")" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            > "$RUNNER_TEMP/official-dotnet10-sdk/MANIFEST.txt"
+
+      - name: Upload checksum-verified official archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: official-dotnet-sdk-10.0.400-linux-x64
+          path: ${{ runner.temp }}/official-dotnet10-sdk
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
