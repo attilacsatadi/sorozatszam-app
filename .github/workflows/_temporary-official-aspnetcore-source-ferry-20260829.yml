@@ -1,0 +1,49 @@
+name: Exact public ASP.NET Core source snapshot ferry 20260829
+
+on:
+  push:
+    branches:
+      - ci/official-dotnet11-preview7-sdk-ferry-20260829
+    paths:
+      - .github/workflows/_temporary-official-aspnetcore-source-ferry-20260829.yml
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      UPSTREAM: https://github.com/dotnet/aspnetcore.git
+      COMMIT: 8c1a406592b06b954acac509fa4725ca560b2e53
+    steps:
+      - name: Clone exact public source and create deterministic snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/aspnetcore-snapshot"
+          mkdir -p "$root"
+          git init "$root/repo"
+          git -C "$root/repo" remote add origin "$UPSTREAM"
+          git -C "$root/repo" fetch --depth 1 origin "$COMMIT"
+          git -C "$root/repo" checkout --detach FETCH_HEAD
+          test "$(git -C "$root/repo" rev-parse HEAD)" = "$COMMIT"
+          git -C "$root/repo" show -s --format=fuller HEAD > "$root/COMMIT.txt"
+          rm -rf "$root/repo/.git"
+          tar --sort=name --mtime='UTC 2026-08-29' --owner=0 --group=0 --numeric-owner \
+            -czf "$root/aspnetcore-${COMMIT}.tar.gz" -C "$root/repo" .
+          sha256sum "$root/aspnetcore-${COMMIT}.tar.gz" > "$root/SHA256SUMS.txt"
+          printf 'upstream=%s\ncommit=%s\nbytes=%s\nutc=%s\n' \
+            "$UPSTREAM" "$COMMIT" "$(stat -c %s "$root/aspnetcore-${COMMIT}.tar.gz")" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            > "$root/MANIFEST.txt"
+          rm -rf "$root/repo"
+
+      - name: Upload exact source snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: exact-public-aspnetcore-source-8c1a406592b06b954acac509fa4725ca560b2e53
+          path: ${{ runner.temp }}/aspnetcore-snapshot
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
