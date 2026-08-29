@@ -1,0 +1,40 @@
+name: Official ASP.NET Core Preview 7 assets package ferry 20260829
+
+on:
+  push:
+    branches:
+      - ci/official-dotnet11-preview7-sdk-ferry-20260829
+    paths:
+      - .github/workflows/_temporary-official-aspnetcore-preview7-assets-package-ferry-20260829.yml
+
+permissions:
+  contents: read
+
+jobs:
+  fetch-official-package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Download official NuGet package
+        shell: bash
+        run: |
+          set -euo pipefail
+          version='11.0.0-preview.7.26381.103'
+          id='microsoft.aspnetcore.app.internal.assets'
+          url="https://api.nuget.org/v3-flatcontainer/${id}/${version}/${id}.${version}.nupkg"
+          out="$RUNNER_TEMP/official-aspnet-assets"
+          mkdir -p "$out"
+          curl --fail --location --retry 4 --retry-delay 2 --output "$out/${id}.${version}.nupkg" "$url"
+          sha512sum "$out/${id}.${version}.nupkg" > "$out/SHA512SUMS.txt"
+          sha256sum "$out/${id}.${version}.nupkg" > "$out/SHA256SUMS.txt"
+          printf 'source_url=%s\nversion=%s\nbytes=%s\nutc=%s\n' \
+            "$url" "$version" "$(stat -c %s "$out/${id}.${version}.nupkg")" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            > "$out/MANIFEST.txt"
+
+      - name: Upload official package
+        uses: actions/upload-artifact@v4
+        with:
+          name: official-microsoft.aspnetcore.app.internal.assets-11.0.0-preview.7.26381.103
+          path: ${{ runner.temp }}/official-aspnet-assets
+          if-no-files-found: error
+          retention-days: 1
