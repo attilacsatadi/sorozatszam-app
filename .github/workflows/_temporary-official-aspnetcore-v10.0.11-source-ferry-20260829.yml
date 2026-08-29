@@ -1,0 +1,50 @@
+name: Exact public ASP.NET Core 10.0.11 source ferry 20260829
+
+on:
+  push:
+    branches:
+      - ci/official-dotnet11-preview7-sdk-ferry-20260829
+    paths:
+      - .github/workflows/_temporary-official-aspnetcore-v10.0.11-source-ferry-20260829.yml
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      UPSTREAM: https://github.com/dotnet/aspnetcore.git
+      COMMIT: a5383385245bdacc20ec19f30e46090a8154d8da
+      VERSION: v10.0.11
+    steps:
+      - name: Clone exact public source and create deterministic snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/aspnetcore-v10.0.11-snapshot"
+          mkdir -p "$root"
+          git init "$root/repo"
+          git -C "$root/repo" remote add origin "$UPSTREAM"
+          git -C "$root/repo" fetch --depth 1 origin "$COMMIT"
+          git -C "$root/repo" checkout --detach FETCH_HEAD
+          test "$(git -C "$root/repo" rev-parse HEAD)" = "$COMMIT"
+          git -C "$root/repo" show -s --format=fuller HEAD > "$root/COMMIT.txt"
+          rm -rf "$root/repo/.git"
+          tar --sort=name --mtime='UTC 2026-08-29' --owner=0 --group=0 --numeric-owner \
+            -czf "$root/aspnetcore-${VERSION}-${COMMIT}.tar.gz" -C "$root/repo" .
+          sha256sum "$root/aspnetcore-${VERSION}-${COMMIT}.tar.gz" > "$root/SHA256SUMS.txt"
+          printf 'upstream=%s\nversion=%s\ncommit=%s\nbytes=%s\nutc=%s\n' \
+            "$UPSTREAM" "$VERSION" "$COMMIT" "$(stat -c %s "$root/aspnetcore-${VERSION}-${COMMIT}.tar.gz")" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            > "$root/MANIFEST.txt"
+          rm -rf "$root/repo"
+
+      - name: Upload exact source snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: exact-public-aspnetcore-v10.0.11-a5383385245bdacc20ec19f30e46090a8154d8da
+          path: ${{ runner.temp }}/aspnetcore-v10.0.11-snapshot
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
