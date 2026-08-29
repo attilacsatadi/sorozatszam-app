@@ -1,0 +1,150 @@
+name: Generic dnx source precedence probe 20260829
+
+on:
+  push:
+    branches:
+      - ci/dnx-source-precedence-probe-20260829
+    paths:
+      - .github/workflows/_temporary-dnx-source-precedence-probe-20260829.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: generic-dnx-source-precedence-probe-20260829
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.400
+
+      - name: Execute generic local-source matrix
+        shell: bash
+        env:
+          DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+          DOTNET_NOLOGO: "1"
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/dnx-source-precedence-evidence"
+          local_feed="$RUNNER_TEMP/local-feed"
+          empty_feed="$RUNNER_TEMP/empty-feed"
+          cases="$RUNNER_TEMP/cases"
+          mkdir -p "$evidence" "$local_feed" "$empty_feed" "$cases"
+
+          dotnet --info | tee "$evidence/dotnet-info.txt"
+          set +e
+          dotnet dnx --help > "$evidence/dotnet-dnx-help.txt" 2>&1
+          help_rc=$?
+          set -e
+          echo "$help_rc" > "$evidence/dotnet-dnx-help-rc.txt"
+
+          dotnet pack ci-probes/dnx-source-precedence/Tool/Tool.csproj \
+            --configuration Release --output "$local_feed" --nologo \
+            | tee "$evidence/pack.log"
+          test -f "$local_feed/zdb.local.toolprobe.999.0.0.nupkg"
+          sha256sum "$local_feed/zdb.local.toolprobe.999.0.0.nupkg" > "$evidence/package-sha256.txt"
+
+          run_case() {
+            local name="$1"
+            local config_source="$2"
+            local explicit_source="$3"
+            local case_dir="$cases/$name"
+            local marker="$evidence/marker-$name.json"
+            mkdir -p "$case_dir" "$RUNNER_TEMP/home-$name" "$RUNNER_TEMP/packages-$name"
+            cat > "$case_dir/NuGet.config" <<XML
+          <?xml version="1.0" encoding="utf-8"?>
+          <configuration>
+            <packageSources>
+              <clear />
+              <add key="case-source" value="$config_source" />
+            </packageSources>
+          </configuration>
+          XML
+            rm -f "$marker"
+            set +e
+            (
+              cd "$case_dir"
+              export DOTNET_CLI_HOME="$RUNNER_TEMP/home-$name"
+              export NUGET_PACKAGES="$RUNNER_TEMP/packages-$name"
+              export ZDB_DNX_MARKER="$marker"
+              export ZDB_FAKE_SENTINEL="FAKE_ONLY_$name"
+              if test -n "$explicit_source"; then
+                dotnet dnx --yes --source "$explicit_source" zdb.local.toolprobe
+              else
+                dotnet dnx --yes zdb.local.toolprobe
+              fi
+            ) > "$evidence/console-$name.txt" 2>&1
+            local rc=$?
+            set -e
+            echo "$rc" > "$evidence/rc-$name.txt"
+          }
+
+          run_case ambient "$local_feed" ""
+          run_case empty-control "$empty_feed" ""
+          run_case explicit-source "$local_feed" "$empty_feed"
+
+          python3 - "$evidence" <<'PY'
+          import json, pathlib, sys
+          root = pathlib.Path(sys.argv[1])
+          help_rc = int((root / "dotnet-dnx-help-rc.txt").read_text().strip())
+          def c(name):
+              marker = root / f"marker-{name}.json"
+              return {
+                  "returnCode": int((root / f"rc-{name}.txt").read_text().strip()),
+                  "markerPresent": marker.exists(),
+                  "marker": json.loads(marker.read_text()) if marker.exists() else None,
+              }
+          ambient, empty, explicit = c("ambient"), c("empty-control"), c("explicit-source")
+          gate = (
+              help_rc == 0
+              and ambient["returnCode"] == 0 and ambient["markerPresent"]
+              and empty["returnCode"] != 0 and not empty["markerPresent"]
+              and explicit["returnCode"] != 0 and not explicit["markerPresent"]
+          )
+          result = {
+              "purpose": "Generic harmless dnx package-source precedence validation",
+              "externalTargets": [],
+              "sdkExpected": "10.0.400",
+              "packageId": "zdb.local.toolprobe",
+              "packageVersion": "999.0.0",
+              "dotnetDnxHelpReturnCode": help_rc,
+              "ambientWorkspaceSource": ambient,
+              "emptySourceNegativeControl": empty,
+              "explicitSourceControl": explicit,
+              "candidatePrimitiveGate": gate,
+          }
+          (root / "result.json").write_text(json.dumps(result, indent=2) + "\n")
+          (root / "SUMMARY.md").write_text(
+              "# Generic dnx source-precedence result\n\n"
+              f"- Candidate primitive gate: **{'PASS' if gate else 'FAIL'}**\n"
+              f"- Ambient: rc={ambient['returnCode']}, marker={ambient['markerPresent']}\n"
+              f"- Empty-source control: rc={empty['returnCode']}, marker={empty['markerPresent']}\n"
+              f"- Explicit-source control: rc={explicit['returnCode']}, marker={explicit['markerPresent']}\n"
+              f"- dotnet dnx help return code: {help_rc}\n"
+          )
+          PY
+
+          cp ci-probes/dnx-source-precedence/Tool/Program.cs "$evidence/Program.cs"
+          cp ci-probes/dnx-source-precedence/Tool/Tool.csproj "$evidence/Tool.csproj"
+          cp .github/workflows/_temporary-dnx-source-precedence-probe-20260829.yml "$evidence/workflow.yml"
+          printf 'repository=%s\nsha=%s\nrun_id=%s\nrun_attempt=%s\nutc=%s\n' \
+            "$GITHUB_REPOSITORY" "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            > "$evidence/environment.txt"
+          (cd "$evidence" && find . -type f ! -name SHA256SUMS.txt -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS.txt)
+
+      - name: Upload evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: generic-dnx-source-precedence-evidence-20260829
+          path: ${{ runner.temp }}/dnx-source-precedence-evidence
+          if-no-files-found: error
+          retention-days: 30
