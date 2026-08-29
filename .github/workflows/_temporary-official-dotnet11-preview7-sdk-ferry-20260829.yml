@@ -1,0 +1,44 @@
+name: Official .NET 11 Preview 7 SDK checksum ferry 20260829
+
+on:
+  push:
+    branches:
+      - ci/official-dotnet11-preview7-sdk-ferry-20260829
+    paths:
+      - .github/workflows/_temporary-official-dotnet11-preview7-sdk-ferry-20260829.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: official-dotnet11-preview7-sdk-ferry-20260829
+  cancel-in-progress: true
+
+jobs:
+  fetch-official-sdk:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Download and verify official Microsoft SDK archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          url='https://builds.dotnet.microsoft.com/dotnet/Sdk/11.0.100-preview.7.26381.103/dotnet-sdk-11.0.100-preview.7.26381.103-linux-x64.tar.gz'
+          expected='527f9dc8104a86214e37e81c7cea2c7d7fba31f6158a23e71458b85a0a2fba53fb2c606a2a3e53a2775fdae3e3d27cd644637b43039e573395ad1dee4b3968b1'
+          mkdir -p "$RUNNER_TEMP/official-dotnet-sdk"
+          archive="$RUNNER_TEMP/official-dotnet-sdk/dotnet-sdk-11.0.100-preview.7.26381.103-linux-x64.tar.gz"
+          curl --fail --location --retry 4 --retry-delay 3 --output "$archive" "$url"
+          actual="$(sha512sum "$archive" | awk '{print $1}')"
+          test "$actual" = "$expected"
+          printf 'source_url=%s\nsha512=%s\nbytes=%s\nutc=%s\n' \
+            "$url" "$actual" "$(stat -c %s "$archive")" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            > "$RUNNER_TEMP/official-dotnet-sdk/MANIFEST.txt"
+
+      - name: Upload checksum-verified official archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: official-dotnet-sdk-11.0.100-preview.7.26381.103-linux-x64
+          path: ${{ runner.temp }}/official-dotnet-sdk
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
