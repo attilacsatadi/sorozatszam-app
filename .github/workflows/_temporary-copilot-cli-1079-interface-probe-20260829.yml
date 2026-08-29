@@ -1,0 +1,58 @@
+name: Generic Copilot CLI 1.0.79 interface probe 20260829
+
+on:
+  push:
+    branches:
+      - ci/dnx-source-precedence-probe-20260829
+    paths:
+      - .github/workflows/_temporary-copilot-cli-1079-interface-probe-20260829.yml
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install exact Copilot CLI
+        shell: bash
+        env:
+          VERSION: 1.0.79
+          PREFIX: ${{ runner.temp }}/copilot-install
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          curl -fsSL https://raw.githubusercontent.com/github/copilot-cli/main/install.sh | bash
+          echo "$PREFIX/bin" >> "$GITHUB_PATH"
+      - name: Capture command interface
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/copilot-cli-1079-interface"
+          mkdir -p "$out"
+          copilot --version > "$out/version.txt" 2>&1 || true
+          for args in \
+            "--help" \
+            "plugin --help" \
+            "plugin install --help" \
+            "plugin list --help" \
+            "mcp --help" \
+            "help"; do
+            name="$(printf '%s' "$args" | tr ' /-' '___')"
+            set +e
+            copilot $args > "$out/$name.txt" 2>&1
+            rc=$?
+            set -e
+            echo "$rc" > "$out/$name.rc"
+          done
+          sha256sum "$RUNNER_TEMP/copilot-install/bin/copilot" > "$out/copilot-binary-sha256.txt"
+          printf 'repository=%s\nsha=%s\nrun_id=%s\nutc=%s\n' "$GITHUB_REPOSITORY" "$GITHUB_SHA" "$GITHUB_RUN_ID" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$out/environment.txt"
+          (cd "$out" && find . -type f ! -name SHA256SUMS.txt -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS.txt)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: generic-copilot-cli-1079-interface-20260829
+          path: ${{ runner.temp }}/copilot-cli-1079-interface
+          if-no-files-found: error
+          retention-days: 30
